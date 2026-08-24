@@ -1,995 +1,984 @@
 # Mean-Reversion Backtest
 
-Backtest pédagogique d’une stratégie de retour à la moyenne appliquée à une paire d’ETF suivant le S&P 500 : SPY et IVV.
+Educational project implementing and evaluating a simple mean-reversion trading strategy on two highly correlated ETFs: SPY and IVV.
 
-Le projet couvre l’ensemble du processus :
+The objective is to build a complete backtesting pipeline including:
 
-- téléchargement et nettoyage des données ;
-- construction d’un spread ;
-- calcul d’un z-score glissant ;
-- génération de signaux de trading ;
-- calcul des rendements et du PnL ;
-- prise en compte des frais de transaction ;
-- gestion du risque avec un stop-loss ;
-- calcul de mesures de performance.
+* market data retrieval;
+* spread construction;
+* rolling z-score calculation;
+* trading signals;
+* position management;
+* transaction costs;
+* stop-loss rules;
+* PnL calculation;
+* performance analysis.
 
-## Objectif du projet
+The project is designed as an introduction to systematic trading and backtesting methodology.
 
-L’objectif est d’étudier une stratégie de pair trading fondée sur l’idée suivante :
+---
 
-```text
-SPY et IVV suivent tous les deux le S&P 500.
+## Project Objective
 
-Leurs évolutions sont donc normalement très proches.
+SPY and IVV are two exchange-traded funds that both track the S&P 500 index.
 
-Lorsqu’un écart inhabituel apparaît entre les deux ETF,
-la stratégie suppose que cet écart peut revenir vers son niveau habituel.
-```
+Because they are exposed to almost the same underlying market, their prices tend to move very closely together.
 
-Ce projet est principalement pédagogique. Il permet de comprendre la construction d’un backtest et ses limites.
+However, temporary deviations can occur.
 
-Un bon résultat historique ne garantit pas qu’une stratégie fonctionnera dans le futur.
+The strategy is based on the idea that these deviations may revert toward their historical average.
 
-## SPY et IVV
+The objective is therefore to detect unusually large deviations between SPY and IVV and trade in the direction of mean reversion.
 
-SPY et IVV sont deux ETF américains qui cherchent à reproduire la performance du S&P 500.
+---
 
-Un ETF est un fonds coté en Bourse. Il contient un panier d’actions, mais peut être acheté ou vendu comme une action classique.
-
-Les deux ETF possèdent donc des portefeuilles très proches, composés de grandes entreprises américaines.
-
-Cependant, leur prix par part n’est pas exactement identique. Il n’est donc pas pertinent d’étudier directement :
-
-```text
-SPY - IVV
-```
-
-Une différence brute peut varier uniquement parce que les deux actifs n’ont pas la même échelle de prix.
-
-## Structure du projet
+# Project Structure
 
 ```text
 mean-reversion-backtest/
-├── data/
-│   ├── prices.csv
-│   ├── spread_zscore.csv
-│   ├── signals.csv
-│   ├── risk_positions.csv
-│   └── backtest_results.csv
 │
 ├── figures/
-│   ├── normalized_prices.png
-│   ├── spread.png
-│   ├── zscore.png
-│   ├── trading_signals.png
-│   ├── positions.png
-│   ├── daily_strategy_returns.png
-│   ├── equity_curve.png
-│   ├── equity_curve_with_costs.png
-│   └── drawdown.png
+│   └── ...
 │
 ├── src/
-│   ├── __init__.py
-│   ├── spread.py
-│   ├── signals.py
-│   ├── backtest.py
-│   ├── metrics.py
-│   └── risk.py
+│   ├── ...
 │
-├── download_data.py
-├── spread_demo.py
-├── signals_demo.py
-├── risk_demo.py
-├── backtest_demo.py
+│
+├── ...
 ├── requirements.txt
 ├── .gitignore
 └── README.md
 ```
 
-Les fichiers CSV du dossier `data/` sont générés automatiquement par les scripts et ne sont pas nécessairement publiés sur GitHub.
-
-## Installation
-
-Créer un environnement virtuel :
-
-```powershell
-python -m venv .venv
-```
-
-Sous PowerShell, il peut être nécessaire d’autoriser temporairement l’exécution des scripts :
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
-```
-
-Activer ensuite l’environnement :
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-Installer les bibliothèques :
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-Les principales dépendances sont :
-
-```text
-numpy
-pandas
-matplotlib
-yfinance
-```
-
-## Ordre d’exécution
-
-Les scripts doivent être exécutés dans l’ordre suivant :
-
-```powershell
-python download_data.py
-python spread_demo.py
-python signals_demo.py
-python risk_demo.py
-python backtest_demo.py
-```
-
-Chaque étape utilise les résultats produits par l’étape précédente.
+The exact file organization may vary depending on the implementation, but the project separates data processing, signal generation, backtesting and visualization.
 
 ---
 
-# 1. Téléchargement des données
+# 1. Market Data
 
-Le script :
-
-```text
-download_data.py
-```
-
-télécharge les prix historiques de SPY et IVV avec `yfinance`.
-
-Les données utilisées sont les prix de clôture ajustés.
-
-Le programme vérifie notamment :
-
-- que les données ont bien été téléchargées ;
-- que les colonnes SPY et IVV sont présentes ;
-- qu’il n’existe pas de dates dupliquées ;
-- qu’il n’existe pas de valeurs manquantes après nettoyage ;
-- que les dates sont classées dans l’ordre chronologique.
-
-Les prix nettoyés sont enregistrés dans :
+The strategy uses historical prices for:
 
 ```text
-data/prices.csv
+SPY
+IVV
 ```
 
-## Normalisation des prix
+Both ETFs track the S&P 500 and therefore have very similar long-term price dynamics.
 
-Pour comparer graphiquement les deux actifs, leurs prix sont normalisés avec une base 100.
+Historical market data is downloaded and aligned by date before being used in the backtest.
 
-Le calcul est :
-
-```text
-prix normalisé à la date t
-=
-100 × prix à la date t / premier prix observé
-```
-
-Exemple :
-
-```text
-Prix initial : 200
-Prix actuel  : 240
-
-Prix normalisé
-=
-100 × 240 / 200
-=
-120
-```
-
-Une valeur normalisée de 120 correspond donc à une progression de 20 % depuis le début de la période.
-
-Le graphique obtenu est enregistré dans :
-
-```text
-figures/normalized_prices.png
-```
-
-![Prix normalisés](figures/normalized_prices.png)
+Only dates for which both assets have valid observations are retained.
 
 ---
 
-# 2. Construction du spread
+# 2. Why Use Two Similar ETFs?
 
-Le spread utilisé est le logarithme du ratio entre SPY et IVV.
+The strategy does not attempt to predict the direction of the overall stock market.
+
+Instead, it focuses on the relative behaviour of two strongly related assets.
+
+For example:
+
+```text
+SPY rises strongly
+IVV rises less strongly
+```
+
+The difference between the two assets may temporarily increase.
+
+If this difference later returns toward its usual level, a relative-value trade may generate a profit.
+
+The strategy therefore tries to exploit:
+
+```text
+temporary relative deviations
+rather than
+absolute market direction
+```
+
+---
+
+# 3. Log-Price Spread
+
+The spread is constructed using the logarithm of the two ETF prices.
+
+Conceptually:
 
 ```text
 spread
 =
-log(SPY / IVV)
+log(SPY price)
+-
+log(IVV price)
 ```
 
-Cette expression est équivalente à :
+Using logarithmic prices is convenient because relative price changes become easier to interpret.
 
-```text
-spread
-=
-log(SPY) - log(IVV)
-```
+If the two ETFs move perfectly together, the spread should remain relatively stable.
 
-## Interprétation
-
-```text
-Le spread augmente
-→ SPY devient relativement plus haut par rapport à IVV
-
-Le spread diminue
-→ SPY devient relativement plus bas par rapport à IVV
-```
-
-Le logarithme permet de comparer les variations relatives des deux actifs sans être perturbé par leur différence d’échelle.
-
-Le calcul est réalisé dans :
-
-```text
-src/spread.py
-```
-
-Le script :
-
-```text
-spread_demo.py
-```
-
-enregistre les résultats dans :
-
-```text
-data/spread_zscore.csv
-```
-
-Le spread et sa moyenne glissante sont représentés dans :
-
-```text
-figures/spread.png
-```
-
-![Spread](figures/spread.png)
+Temporary deviations create movements in the spread.
 
 ---
 
-# 3. Z-score glissant
+# 4. Rolling Mean and Standard Deviation
 
-Une valeur du spread n’est pas directement interprétable sans connaître son comportement récent.
+The current spread alone does not tell us whether a deviation is unusually large.
 
-Le z-score mesure la distance entre le spread actuel et sa moyenne récente.
+The strategy therefore compares the current spread with its recent historical behaviour.
+
+A rolling window of:
+
+```text
+20 trading days
+```
+
+is used.
+
+For each date, the program calculates:
+
+```text
+rolling mean of the spread
+
+rolling standard deviation of the spread
+```
+
+These values describe the recent equilibrium level and recent variability of the spread.
+
+---
+
+# 5. Z-Score
+
+The z-score measures how far the current spread is from its rolling mean.
+
+Conceptually:
 
 ```text
 z-score
 =
-(spread actuel - moyenne glissante)
-/
-écart-type glissant
+current spread - rolling mean
+--------------------------------
+rolling standard deviation
 ```
 
-Une fenêtre de 20 jours de Bourse est utilisée.
-
-## Interprétation
+Examples:
 
 ```text
-z-score proche de 0
-→ le spread est proche de son niveau récent habituel
+z-score = 0
+→ spread close to its recent average
 
-z-score positif
-→ SPY est relativement haut par rapport à IVV
+z-score = +2
+→ spread approximately two standard deviations above its recent average
 
-z-score négatif
-→ SPY est relativement bas par rapport à IVV
-
-z-score supérieur à 2
-→ écart positif considéré comme important
-
-z-score inférieur à -2
-→ écart négatif considéré comme important
+z-score = -2
+→ spread approximately two standard deviations below its recent average
 ```
 
-Le graphique est enregistré dans :
-
-```text
-figures/zscore.png
-```
-
-![Z-score](figures/zscore.png)
-
-Un z-score élevé ne garantit pas que le spread reviendra ensuite vers sa moyenne. Il indique uniquement que l’écart est inhabituel par rapport à la fenêtre récente.
+The z-score is therefore used as the main trading signal.
 
 ---
 
-# 4. Règles de trading
+# 6. Trading Logic
 
-Les signaux sont générés dans :
+The strategy assumes that unusually large deviations will eventually revert toward the rolling mean.
 
-```text
-src/signals.py
-```
-
-Trois positions sont possibles :
+The entry thresholds are:
 
 ```text
-+1 = acheter le spread
- 0 = ne détenir aucune position
--1 = vendre le spread
+z-score > +2
+
+or
+
+z-score < -2
 ```
 
-## Achat du spread
-
-Lorsque :
+If:
 
 ```text
-z-score <= -2
+z-score > +2
 ```
 
-la stratégie considère que SPY est relativement bas par rapport à IVV.
+the spread is considered unusually high.
 
-Elle prend alors la position suivante :
+Since:
 
 ```text
-acheter SPY
-vendre IVV
+spread = log(SPY) - log(IVV)
 ```
 
-La position est représentée par :
+this suggests that SPY is relatively expensive compared with IVV.
+
+The strategy therefore takes approximately:
 
 ```text
-+1
+short SPY
+long IVV
 ```
 
-## Vente du spread
-
-Lorsque :
+If:
 
 ```text
-z-score >= 2
+z-score < -2
 ```
 
-la stratégie considère que SPY est relativement haut par rapport à IVV.
+SPY is relatively cheap compared with IVV.
 
-Elle prend alors la position suivante :
+The strategy takes approximately:
 
 ```text
-vendre SPY
-acheter IVV
+long SPY
+short IVV
 ```
 
-La position est représentée par :
+---
+
+# 7. Exit Rule
+
+A position is not immediately closed when the z-score crosses zero.
+
+Instead, the trade is closed once the spread has moved sufficiently close to its recent equilibrium.
+
+The exit threshold used is:
 
 ```text
--1
+|z-score| < 0.5
 ```
 
-## Fermeture de la position
-
-La position est fermée lorsque le z-score revient suffisamment près de zéro.
-
-Le seuil de sortie est fixé à :
+In other words:
 
 ```text
-0,5
+-0.5 < z-score < +0.5
 ```
 
-Pour une position longue :
+This creates a distinction between:
 
 ```text
-fermeture lorsque le z-score devient supérieur ou égal à -0,5
+entry zone
+→ large deviation
+
+exit zone
+→ spread close to equilibrium
 ```
 
-Pour une position courte :
+---
+
+# 8. Position Size
+
+The strategy uses approximately equal exposure on both legs.
+
+Conceptually:
 
 ```text
-fermeture lorsque le z-score devient inférieur ou égal à 0,5
+50% allocation to one leg
+50% allocation to the other leg
 ```
 
-Fermer une position signifie effectuer les opérations inverses afin de revenir à une exposition nulle.
+For a long-SPY / short-IVV trade:
 
-## Décalage des signaux
+```text
++0.5 SPY
+-0.5 IVV
+```
 
-Le signal du jour est calculé avec le prix de clôture du jour.
+For a short-SPY / long-IVV trade:
 
-Il ne peut donc être appliqué qu’à partir du jour suivant.
+```text
+-0.5 SPY
++0.5 IVV
+```
 
-Le programme utilise :
+The absolute total position is limited so that the strategy does not take unlimited leverage.
+
+The maximum absolute position is:
+
+```text
+1
+```
+
+---
+
+# 9. Position Persistence
+
+Once a trade has been opened, the position remains active until an exit condition or stop-loss condition is reached.
+
+This is important because a trading strategy cannot simply recompute a completely independent position every day.
+
+The program therefore tracks whether the strategy is currently:
+
+```text
+long the spread
+
+short the spread
+
+or flat
+```
+
+and updates the position accordingly.
+
+---
+
+# 10. Avoiding Look-Ahead Bias
+
+A crucial issue in backtesting is look-ahead bias.
+
+Suppose a signal is calculated using today's closing price.
+
+That signal cannot realistically be used to trade at the same closing price because the price was required to compute the signal.
+
+To avoid this, the strategy shifts the position by one period:
 
 ```python
-position = target_position.shift(1)
+position = signal.shift(1)
 ```
 
-Ce décalage empêche d’utiliser une information qui n’était pas encore disponible au moment de la prise de position.
-
-Il permet d’éviter un biais appelé :
+This means:
 
 ```text
+information observed at date t
+→ position applied at date t + 1
+```
+
+The backtest therefore does not use future information.
+
+This is one of the most important differences between a realistic backtest and an artificially optimistic one.
+
+---
+
+# 11. Returns
+
+Daily returns are calculated for both assets.
+
+Conceptually:
+
+```text
+SPY return
+=
+percentage change in SPY price
+
+IVV return
+=
+percentage change in IVV price
+```
+
+The return of the trading strategy depends on the positions held in each ETF.
+
+For example, with:
+
+```text
++0.5 SPY
+-0.5 IVV
+```
+
+the strategy return is approximately:
+
+```text
+0.5 × SPY return
+-
+0.5 × IVV return
+```
+
+The strategy therefore depends mainly on the relative movement between the two ETFs.
+
+---
+
+# 12. PnL
+
+The daily PnL is obtained from the positions held and the subsequent asset returns.
+
+Conceptually:
+
+```text
+strategy return
+=
+SPY position × SPY return
++
+IVV position × IVV return
+```
+
+The daily strategy returns are then accumulated over time to obtain the evolution of the portfolio.
+
+This makes it possible to study:
+
+```text
+profitability
+risk
+drawdowns
+stability
+```
+
+---
+
+# 13. Transaction Costs
+
+A strategy that frequently changes positions generates trading costs.
+
+Ignoring these costs can make a backtest unrealistically optimistic.
+
+The project therefore includes proportional transaction costs of:
+
+```text
+5 basis points
+```
+
+where:
+
+```text
+1 basis point = 0.01%
+
+5 basis points = 0.05%
+```
+
+Transaction costs are applied when the position changes.
+
+Conceptually:
+
+```text
+transaction cost
+=
+cost rate
+×
+traded position
+```
+
+The net strategy return becomes:
+
+```text
+net return
+=
+gross strategy return
+-
+transaction costs
+```
+
+---
+
+# 14. Why Transaction Costs Matter
+
+A mean-reversion strategy may trade relatively frequently.
+
+A strategy could appear profitable before costs:
+
+```text
+gross return > 0
+```
+
+but become much less attractive after accounting for repeated purchases and sales.
+
+Including transaction costs therefore provides a more realistic evaluation.
+
+---
+
+# 15. Stop-Loss
+
+The project also includes a stop-loss mechanism.
+
+The stop-loss threshold is:
+
+```text
+0.5%
+```
+
+Its purpose is to prevent a position from continuing to accumulate losses when the assumed mean-reversion relationship temporarily breaks down.
+
+The idea is:
+
+```text
+trade opened
+      ↓
+loss becomes too large
+      ↓
+position closed
+```
+
+The stop-loss introduces a basic form of risk management into the strategy.
+
+---
+
+# 16. Why Mean Reversion Can Fail
+
+A large z-score does not guarantee that the spread will return immediately toward its mean.
+
+For example:
+
+```text
+z-score = +2
+```
+
+can become:
+
+```text
++2.5
++3
++4
+```
+
+before eventually reverting.
+
+It may also reflect a genuine change in the relationship between the two assets.
+
+Mean reversion is therefore an assumption, not a certainty.
+
+This is why risk-management mechanisms such as position limits and stop-losses are important.
+
+---
+
+# 17. Backtesting
+
+The backtest reproduces the strategy historically.
+
+The general process is:
+
+```text
+historical prices
+       ↓
+log-price spread
+       ↓
+rolling statistics
+       ↓
+z-score
+       ↓
+trading signals
+       ↓
+shifted positions
+       ↓
+asset returns
+       ↓
+transaction costs
+       ↓
+strategy PnL
+       ↓
+performance metrics
+```
+
+The purpose of the backtest is not to prove that the strategy will work in the future.
+
+It is used to evaluate how the trading rules would have behaved on historical data.
+
+---
+
+# 18. Why Backtesting Is Useful
+
+A backtest can reveal whether a strategy has undesirable characteristics.
+
+For example:
+
+```text
+very large drawdowns
+excessive trading
+high sensitivity to transaction costs
+unstable performance
+poor risk-adjusted returns
+```
+
+It also makes it possible to compare different trading rules in a consistent framework.
+
+However:
+
+```text
+good historical performance
+does not guarantee
+good future performance
+```
+
+---
+
+# 19. Cumulative Performance
+
+Daily strategy returns are compounded to calculate portfolio performance over time.
+
+Conceptually:
+
+```text
+portfolio value today
+=
+portfolio value yesterday
+×
+(1 + daily return)
+```
+
+This produces an equity curve representing the evolution of the strategy.
+
+The equity curve is useful for visualizing:
+
+```text
+growth
+periods of loss
+recovery
+drawdowns
+```
+
+---
+
+# 20. Performance Metrics
+
+Several metrics can be used to evaluate the strategy.
+
+They provide information about both return and risk.
+
+---
+
+# 21. Total Return
+
+Total return measures the overall change in portfolio value over the backtest period.
+
+Conceptually:
+
+```text
+total return
+=
+final portfolio value
+---------------------
+initial portfolio value
+-
+1
+```
+
+A positive total return means that the strategy generated a profit over the historical period.
+
+---
+
+# 22. Volatility
+
+Volatility measures the variability of strategy returns.
+
+A strategy with highly unstable returns has higher volatility.
+
+Conceptually:
+
+```text
+high volatility
+→ larger fluctuations
+
+low volatility
+→ more stable returns
+```
+
+Volatility is a measure of risk, but it does not distinguish between positive and negative movements.
+
+---
+
+# 23. Sharpe Ratio
+
+The Sharpe ratio compares return with volatility.
+
+Conceptually:
+
+```text
+Sharpe ratio
+=
+return
+--------
+risk
+```
+
+A higher Sharpe ratio indicates that more return is obtained for a given level of volatility.
+
+It should not be interpreted as a complete measure of strategy quality, but it is useful for comparing risk-adjusted performance.
+
+---
+
+# 24. Maximum Drawdown
+
+Maximum drawdown measures the largest loss from a previous portfolio peak to the following trough.
+
+Suppose the portfolio evolves as:
+
+```text
+€10,000
+→ €15,000
+→ €9,000
+```
+
+The relevant drawdown is measured from:
+
+```text
+peak = €15,000
+```
+
+to:
+
+```text
+trough = €9,000
+```
+
+The loss is:
+
+```text
+€6,000
+```
+
+relative to the peak:
+
+```text
+€6,000 / €15,000
+=
+40%
+```
+
+Therefore:
+
+```text
+maximum drawdown = 40%
+```
+
+This metric is particularly useful because it represents the type of loss an investor would have experienced after reaching a previous portfolio high.
+
+---
+
+# 25. Why Maximum Drawdown Matters
+
+Two strategies may have similar final returns but very different paths.
+
+For example:
+
+```text
+Strategy A:
+smooth growth
+small drawdowns
+
+Strategy B:
+large crashes
+followed by recoveries
+```
+
+Even if both finish at the same value, Strategy B is significantly more difficult and risky to hold.
+
+Maximum drawdown therefore provides information that total return alone cannot capture.
+
+---
+
+# 26. Strategy Interpretation
+
+The strategy is a relative-value strategy.
+
+It does not primarily attempt to forecast:
+
+```text
+whether the S&P 500 will rise or fall
+```
+
+Instead, it attempts to forecast:
+
+```text
+whether the relative difference
+between SPY and IVV
+will revert toward its recent average
+```
+
+This reduces exposure to the general direction of the market compared with a simple directional strategy.
+
+---
+
+# 27. Main Result
+
+The project demonstrates the complete construction of a simple systematic trading strategy.
+
+The main steps are:
+
+```text
+identify a relative-value relationship
+        ↓
+construct a spread
+        ↓
+normalize it using a z-score
+        ↓
+define systematic trading rules
+        ↓
+avoid look-ahead bias
+        ↓
+include transaction costs
+        ↓
+apply risk management
+        ↓
+evaluate historical performance
+```
+
+The most important result is not simply whether the historical return is positive.
+
+The project illustrates how a trading idea must be translated into precise and testable rules.
+
+---
+
+# 28. Limitations
+
+This project is intentionally simplified.
+
+Several limitations should be considered.
+
+## Historical Relationship
+
+SPY and IVV have historically tracked the same underlying index, but their statistical relationship is not guaranteed to remain identical in the future.
+
+---
+
+## Rolling Parameters
+
+The rolling mean and standard deviation are estimated from only:
+
+```text
+20 trading days
+```
+
+Different window lengths may produce different signals.
+
+---
+
+## Fixed Thresholds
+
+The strategy uses fixed thresholds:
+
+```text
+entry: ±2
+
+exit: ±0.5
+```
+
+These values were selected for the project and are not necessarily optimal.
+
+Optimizing thresholds excessively on historical data could lead to overfitting.
+
+---
+
+## Transaction Costs
+
+The project assumes constant transaction costs of:
+
+```text
+5 basis points
+```
+
+Real trading costs vary through time and may depend on:
+
+```text
+liquidity
+bid-ask spreads
+market conditions
+order size
+```
+
+---
+
+## No Market Impact
+
+The strategy assumes that trades do not affect market prices.
+
+This is reasonable for a small educational backtest but may not hold for large trading volumes.
+
+---
+
+## Simplified Execution
+
+The backtest uses historical prices and simplified execution assumptions.
+
+Real trading may involve:
+
+```text
+slippage
+latency
+partial fills
+different bid and ask prices
+```
+
+---
+
+## Model Risk
+
+A high z-score does not guarantee future mean reversion.
+
+The spread may move because the statistical relationship between the assets has changed.
+
+---
+
+# 29. Possible Extensions
+
+Several extensions could improve the project:
+
+```text
+out-of-sample testing
+walk-forward validation
+dynamic entry thresholds
+cointegration testing
+different rolling-window lengths
+more realistic transaction costs
+slippage
+parameter sensitivity analysis
+multiple ETF pairs
+portfolio-level risk management
+different stop-loss rules
+```
+
+These extensions would help evaluate the robustness of the strategy.
+
+---
+
+# 30. Skills Developed
+
+This project provides practice with:
+
+```text
+Python
+NumPy
+pandas
+Matplotlib
+financial time series
+market data
+log returns
+rolling statistics
+z-scores
+mean-reversion strategies
+systematic trading
+position management
+backtesting
 look-ahead bias
-```
-
-Les signaux sont enregistrés dans :
-
-```text
-data/signals.csv
-```
-
-Les graphiques associés sont :
-
-```text
-figures/trading_signals.png
-figures/positions.png
-```
-
-![Signaux](figures/trading_signals.png)
-
-![Positions](figures/positions.png)
-
----
-
-# 5. Calcul des rendements
-
-Le rendement quotidien d’un actif est calculé avec :
-
-```text
-rendement à la date t
-=
-prix à la date t / prix à la date t-1 - 1
-```
-
-Exemple :
-
-```text
-Prix précédent : 100
-Prix actuel    : 102
-
-Rendement
-=
-102 / 100 - 1
-=
-0,02
-=
-2 %
-```
-
-Le rendement d’une position longue sur le spread est :
-
-```text
-rendement du spread
-=
-rendement de SPY - rendement d’IVV
-```
-
-## Pondération du portefeuille
-
-La stratégie utilise une pondération de 50 % sur chaque jambe.
-
-Pour une position longue :
-
-```text
-+50 % du capital sur SPY
--50 % du capital sur IVV
-```
-
-Pour une position courte :
-
-```text
--50 % du capital sur SPY
-+50 % du capital sur IVV
-```
-
-Le rendement brut de la stratégie est donc :
-
-```text
-rendement brut
-=
-0,5 × position × rendement du spread
-```
-
-La stratégie possède une exposition nette proche de zéro :
-
-```text
-+50 % - 50 % = 0 %
-```
-
-Elle cherche ainsi à gagner sur la différence de performance entre les deux ETF plutôt que sur la direction générale du marché.
-
----
-
-# 6. Frais de transaction
-
-Les frais de transaction sont modélisés avec un coût fixe exprimé en points de base.
-
-L’hypothèse utilisée est :
-
-```text
-5 points de base par montant échangé
-```
-
-Un point de base correspond à :
-
-```text
-1 point de base = 0,01 % = 0,0001
-```
-
-Donc :
-
-```text
-5 points de base = 0,05 % = 0,0005
-```
-
-Les coûts peuvent représenter :
-
-- les commissions ;
-- le bid-ask spread ;
-- un impact de marché simplifié.
-
-## Turnover
-
-Le turnover mesure le montant échangé relativement au capital.
-
-Passage de zéro à une position :
-
-```text
-0 → +1
-ou
-0 → -1
-
-turnover = 100 % du capital
-```
-
-Fermeture d’une position :
-
-```text
-+1 → 0
-ou
--1 → 0
-
-turnover = 100 % du capital
-```
-
-Inversion directe :
-
-```text
-+1 → -1
-ou
--1 → +1
-
-turnover = 200 % du capital
-```
-
-Le rendement après frais est :
-
-```text
-rendement net
-=
-rendement brut - frais de transaction
-```
-
-Le projet compare donc deux courbes de capital :
-
-```text
-courbe avant frais
-courbe après frais
-```
-
-Le graphique est enregistré dans :
-
-```text
-figures/equity_curve_with_costs.png
-```
-
-![Courbe de capital](figures/equity_curve_with_costs.png)
-
----
-
-# 7. Gestion du risque
-
-La gestion du risque est réalisée dans :
-
-```text
-src/risk.py
-```
-
-Elle comprend :
-
-- une limite de position ;
-- un stop-loss ;
-- un blocage temporaire après un stop-loss.
-
-## Limite de position
-
-Les positions sont limitées à l’intervalle :
-
-```text
--1 <= position <= 1
-```
-
-Cette limite empêche le programme de prendre une exposition supérieure à la taille maximale prévue.
-
-## Stop-loss
-
-Le stop-loss est fixé à :
-
-```text
-0,5 % du capital
-```
-
-Lorsqu’un trade accumule une perte d’au moins 0,5 %, le stop-loss est déclenché.
-
-Le stop est vérifié à la fin de la journée. La fermeture de la position devient donc effective à partir du jour suivant.
-
-Le stop-loss ne garantit pas l’absence de pertes. Il limite uniquement la durée d’exposition à un trade qui évolue défavorablement.
-
-## Blocage après le stop-loss
-
-Après le déclenchement du stop-loss, la stratégie ne reprend pas immédiatement la même position.
-
-Elle attend que le signal initial revienne à zéro avant d’autoriser un nouveau trade.
-
-Cela évite le comportement suivant :
-
-```text
-stop-loss déclenché
-→ fermeture
-→ réouverture immédiate du même trade
-→ nouveau stop-loss
-```
-
-Les positions après gestion du risque sont enregistrées dans :
-
-```text
-data/risk_positions.csv
-```
-
----
-
-# 8. Courbe de capital
-
-La courbe de capital représente l’évolution d’un capital initial normalisé à 1.
-
-```text
-equity curve = 1,00
-→ capital inchangé
-
-equity curve = 1,10
-→ gain de 10 %
-
-equity curve = 0,95
-→ perte de 5 %
-```
-
-Les rendements sont composés dans le temps.
-
-```text
-courbe de capital
-=
-produit cumulé de (1 + rendement quotidien)
-```
-
-Pour un capital initial de 10 000 euros :
-
-```text
-valeur du portefeuille
-=
-10 000 × equity curve
-```
-
----
-
-# 9. Mesures de performance
-
-Les mesures sont calculées dans :
-
-```text
-src/metrics.py
-```
-
-## Rendement total
-
-Le rendement total mesure la variation du capital entre le début et la fin du backtest.
-
-```text
-rendement total
-=
-capital final / capital initial - 1
-```
-
-Le projet calcule le rendement :
-
-```text
-avant frais
-après frais
-```
-
-## Rendement annualisé
-
-Le rendement annualisé transforme la performance totale en rendement moyen équivalent par année.
-
-Il permet de comparer des backtests ayant des durées différentes.
-
-## Volatilité annualisée
-
-La volatilité mesure la variabilité des rendements quotidiens.
-
-```text
-volatilité annualisée
-=
-écart-type quotidien × racine carrée de 252
-```
-
-Le nombre 252 représente approximativement le nombre de jours de Bourse dans une année.
-
-Une forte volatilité indique que les résultats quotidiens sont très irréguliers.
-
-## Sharpe ratio
-
-Le Sharpe ratio compare le rendement moyen au risque pris.
-
-Dans ce projet, le taux sans risque est supposé nul.
-
-```text
+transaction costs
+risk management
+stop-losses
+PnL
+portfolio returns
+volatility
 Sharpe ratio
-=
-rendement quotidien moyen
-/
-volatilité quotidienne
-× racine carrée de 252
-```
-
-Un Sharpe élevé indique que la stratégie obtient davantage de rendement relativement à ses fluctuations.
-
-Un Sharpe négatif indique que le rendement moyen est négatif.
-
-Le Sharpe ratio ne résume cependant pas tous les risques, notamment les événements rares et les pertes extrêmes.
-
-## Drawdown
-
-Le drawdown mesure la perte du portefeuille par rapport à son précédent sommet.
-
-```text
-drawdown
-=
-valeur actuelle / plus haute valeur passée - 1
-```
-
-Exemple :
-
-```text
-Sommet précédent : 110
-Valeur actuelle  : 99
-
-Drawdown
-=
-99 / 110 - 1
-=
--10 %
-```
-
-Le maximum drawdown correspond à la pire baisse observée pendant tout le backtest.
-
-Le graphique est enregistré dans :
-
-```text
-figures/drawdown.png
-```
-
-![Drawdown](figures/drawdown.png)
-
-## Temps passé en position
-
-Cette mesure représente la proportion des journées pendant lesquelles la stratégie possède une position ouverte.
-
-```text
-temps en position
-=
-nombre de journées avec une position non nulle
-/
-nombre total de journées
+maximum drawdown
+strategy evaluation
+Git
+GitHub
 ```
 
 ---
 
-# 10. Résultats
+# 31. Conclusion
 
-Le script final :
+This project implements a complete mean-reversion backtest using SPY and IVV.
 
-```text
-backtest_demo.py
-```
+The strategy detects temporary deviations between the two ETFs through a rolling z-score.
 
-affiche notamment :
+Large deviations trigger relative-value positions:
 
 ```text
-capital initial
-capital final avant frais
-capital final après frais
-impact des frais
-rendement total avant frais
-rendement total après frais
-rendement annualisé
-volatilité annualisée
-Sharpe ratio
-drawdown maximum
-temps passé en position
-nombre d’entrées
-nombre de sorties
+SPY relatively expensive
+→ short SPY / long IVV
+
+SPY relatively cheap
+→ long SPY / short IVV
 ```
 
-Les résultats détaillés sont enregistrés dans :
+Positions are closed when the spread returns sufficiently close to its recent mean.
+
+The backtest also includes important practical considerations:
 
 ```text
-data/backtest_results.csv
+position lagging
+transaction costs
+position limits
+stop-loss rules
+performance metrics
 ```
 
-Les résultats numériques dépendent :
-
-- de la période téléchargée ;
-- de la fenêtre glissante ;
-- des seuils d’entrée et de sortie ;
-- des coûts de transaction ;
-- du stop-loss ;
-- des données renvoyées par Yahoo Finance.
+The project therefore provides a simple introduction to the process of transforming a statistical trading idea into a systematic and testable strategy.
 
 ---
 
-# 11. Limites du projet
+# Disclaimer
 
-Ce backtest constitue une première approche pédagogique. Il possède plusieurs limites importantes.
+This project is for educational purposes only.
 
-## Résultats historiques
+It does not constitute financial advice or a trading strategy intended for direct use in real financial markets.
 
-Le backtest utilise des données passées.
-
-Un PnL historique positif ne garantit pas un PnL positif dans le futur.
-
-Le passé sert uniquement à vérifier si une hypothèse semble cohérente avec les données déjà observées.
-
-## Absence de séparation entraînement-test
-
-Les mêmes données sont utilisées pour construire et évaluer la stratégie.
-
-Une analyse plus rigoureuse devrait séparer :
-
-```text
-période d’entraînement
-→ choix des paramètres
-
-période de test
-→ évaluation sur des données non utilisées
-```
-
-Cela permettrait de limiter le surapprentissage.
-
-## Paramètres fixes
-
-Les paramètres sont choisis à l’avance :
-
-```text
-fenêtre du z-score : 20 jours
-seuil d’entrée     : 2
-seuil de sortie    : 0,5
-stop-loss          : 0,5 %
-frais              : 5 points de base
-```
-
-Le projet n’étudie pas encore la sensibilité des résultats à ces paramètres.
-
-## Spread simplifié
-
-Le spread est construit avec :
-
-```text
-log(SPY) - log(IVV)
-```
-
-Une méthode plus avancée pourrait estimer un hedge ratio statistique :
-
-```text
-log(SPY) - beta × log(IVV)
-```
-
-## Pondération fixe
-
-Chaque jambe reçoit un poids de 50 %.
-
-Le projet ne prend pas en compte :
-
-- les différences de volatilité ;
-- un hedge ratio dynamique ;
-- une allocation optimisée ;
-- un effet de levier variable.
-
-## Exécution simplifiée
-
-Le programme suppose que les positions peuvent être prises sans difficulté aux prix utilisés dans le backtest.
-
-Il ne modélise pas précisément :
-
-- le prix bid et le prix ask ;
-- la liquidité disponible ;
-- le slippage réel ;
-- les délais d’exécution ;
-- les contraintes de vente à découvert ;
-- les coûts d’emprunt des titres.
-
-## Stabilité de la relation
-
-SPY et IVV suivent le même indice, mais leur relation peut évoluer.
-
-Une forte corrélation passée ne garantit pas que leur spread restera toujours stable.
-
-## Paire très proche
-
-Les écarts entre SPY et IVV sont généralement très faibles.
-
-Les frais de transaction peuvent donc absorber une partie importante des gains bruts.
-
-La paire est particulièrement adaptée à l’apprentissage, mais pas nécessairement à la construction d’une stratégie réellement rentable.
-
----
-
-# 12. Améliorations possibles
-
-Plusieurs extensions pourraient être ajoutées :
-
-```text
-séparation in-sample et out-of-sample
-walk-forward analysis
-estimation d’un hedge ratio
-test de stationnarité
-test de cointégration
-analyse de sensibilité des paramètres
-comparaison de plusieurs paires
-calcul des performances par trade
-durée moyenne des trades
-win rate
-gain moyen et perte moyenne
-prise en compte du slippage
-coûts de vente à découvert
-paper trading
-```
-
-Ces éléments ne sont pas nécessaires au fonctionnement de la version actuelle.
-
----
-
-# 13. Compétences travaillées
-
-Ce projet permet de pratiquer :
-
-- Python ;
-- NumPy ;
-- Pandas ;
-- Matplotlib ;
-- téléchargement de données financières ;
-- manipulation de séries temporelles ;
-- rendements quotidiens ;
-- spread et z-score ;
-- génération de signaux ;
-- backtesting ;
-- détection du look-ahead bias ;
-- gestion des positions ;
-- calcul du PnL ;
-- frais de transaction ;
-- stop-loss ;
-- volatilité ;
-- Sharpe ratio ;
-- drawdown ;
-- structuration d’un projet ;
-- Git et GitHub.
-
----
-
-# 14. Avertissement
-
-Ce projet a une vocation exclusivement éducative.
-
-Il ne constitue pas un conseil financier ni une recommandation d’investissement.
-
-Les résultats historiques ne permettent pas de garantir les performances futures.
